@@ -3,13 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data.sampler import *
-from torch.distributions import Categorical
+from torch.distributions import Binomial
 from .PPOMemory import PPO_Memory
 from .ActorCritic import Actor, Critic 
 
 class PPO_Agent:
 
-    def __init__(self, state_size, action_size, alpha, lamda, gamma, batch_size, horizon, num_epoch, clip, device):
+    def __init__(self, state_size, action_size, alpha, beta, lamda, gamma, batch_size, horizon, num_epoch, clip, device):
         """
         Initialize the PPO agent with the given parameters
         :param state_size: Number of states
@@ -22,10 +22,12 @@ class PPO_Agent:
         :param num_epoch: Number of epochs to train the policy
         :param clip: Clipping parameter
         TODO: device
+        TODO: Beta
         """
         self.state_size = state_size # Number of states
         self.action_size = action_size # Number of actions
         self.alpha = alpha # Learning rate
+        self.beta = beta # Entropy coefficient
         self.lamda = lamda # GAE parameter
         self.gamma = gamma # Discount factor
         self.batch_size = batch_size # Number of experiences to sample from the memory
@@ -51,46 +53,50 @@ class PPO_Agent:
         """
         self.memory.store_memory(state, action, probs, vals, reward, done)
 
-    def save_models(self, folder_path, agent_number, n):
+    def save_models(self, folder_path, agent_number, e):
         """
         Save the models
         """
-        self.actor.save_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-actor.pt")
-        self.critic.save_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-critic.pt")  
+        self.actor.save_checkpoint(f"{folder_path}/episode-{e}-agent-{agent_number}-actor.pt")
+        self.critic.save_checkpoint(f"{folder_path}/episode-{e}-agent-{agent_number}-critic.pt")  
 
-    def load_models(self, folder_path, agent_number, n):
+    def load_models(self, folder_path, agent_number, e):
         """
         Load the models
         """
-        self.actor.load_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-actor.pt")
-        self.critic.load_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-critic.pt")
+        self.actor.load_checkpoint(f"{folder_path}/episode-{e}-agent-{agent_number}-actor.pt")
+        self.critic.load_checkpoint(f"{folder_path}/episode-{e}-agent-{agent_number}-critic.pt")
 
     def select_action(self, observation, greedy = False):
         
         # Convert the observation to a tensor 
-        state = torch.tensor(observation, dtype=torch.float).to(self.device)
+        state = observation.to(self.device)
 
-        dist = self.actor(state)
+        sigmoid = self.actor(state)
         value = self.critic(state)
-        # If greedy, we are testing so we return the action with max probability
+
+        # If greedy, we are testing so we round each of the sigmoids to the nearest integer
         if greedy:
-            return torch.argmax(dist), None, None
+            return (sigmoid > 0.5).float(), None, None
         
-        # Categorical distribution for the action
-        dist = Categorical(dist)
+        # Three binomial distributions for the action
+        dist_1 = Binomial(probs=sigmoid[0])
+        dist_2 = Binomial(probs=sigmoid[1])
+        dist_3 = Binomial(probs=sigmoid[2])
 
         # Get action by sampling from the distribution
-        action = dist.sample()
+        action = torch.Tensor([dist_1.sample().item(), dist_2.sample().item(), dist_3.sample().item()])
 
         # Get rid of batch dimension by squeezing 
-        # return the log probability of the action we took
-        probs = torch.squeeze(dist.log_prob(action)).item() # item gives int
-        action = torch.squeeze(action).item()
+        # return the log probability of the action we took (By adding the log-probabilities for each dimension since the dimensions are independent)
+        probs = torch.squeeze(dist_1.log_prob(action[0])).item() + \
+                torch.squeeze(dist_2.log_prob(action[1])).item() + \
+                torch.squeeze(dist_3.log_prob(action[2])).item()
         value = torch.squeeze(value).item()
         
         # return the action and the log probability of the action
         return action, probs, value
-    
+
     def learn(self):
 
         # Iterate over the number of epochs
@@ -119,12 +125,11 @@ class PPO_Agent:
             
             # Turn the advantage into a tensor
             advantage = torch.tensor(advantage).to(self.device)
-            
-            # TODO: clean this up
             values = torch.tensor(values, dtype=torch.float32).to(self.device)
 
             # Iterate over the batches
             for batch in batches:
+
                 # Get the states, actions, old probabilities, advantages and values for the current batch
                 states = torch.tensor(state_arr[batch], dtype=torch.float).to(self.device)
                 old_probs = torch.tensor(old_prob_arr[batch]).to(self.device)
@@ -132,14 +137,19 @@ class PPO_Agent:
 
                 # Compute the new probabilities pi and the values for the current batch
                 # Get the distributions and values for the current batch
-                dist = self.actor(states)
-                # Categorical distribution for the action
-                dist = Categorical(dist)
+                sigmoid = self.actor(states)
+
+                # Convert each action's probability to a binomial distribution
+                dist_1 = Binomial(probs=sigmoid[:, 0])
+                dist_2 = Binomial(probs=sigmoid[:, 1])
+                dist_3 = Binomial(probs=sigmoid[:, 2])
                 
                 critic_value = torch.squeeze(self.critic(states))
 
                 # Calculate the probabilities of the actions taken
-                new_probs = dist.log_prob(actions)
+                new_probs = dist_1.log_prob(actions[:, 0].unsqueeze(-1))  + \
+                            dist_2.log_prob(actions[:, 1].unsqueeze(-1)) + \
+                            dist_3.log_prob(actions[:, 2].unsqueeze(-1))
 
                 # Calculate the ratio of the new probabilities to the old probabilities
                 # We use the exponential of the difference to get the ratio 
@@ -153,24 +163,25 @@ class PPO_Agent:
 
                 # Calculate the actor loss: the minimum of the clipped and unclipped surrogate losses
                 # We take the negative because we want to maximize the objective
-                # We take the mean because we are averaging over the batch size 
-                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
+                # We take the mean because we are averaging over the batch size
+                # Calculate the joint entropy of the three binomial distributions by taking all possible combination of actions
+                entropy = self.joint_entropy(dist_1, dist_2, dist_3)
+                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean() - self.beta * entropy.mean()
 
                 # Calculate the returns
                 returns = advantage[batch] + values[batch]
 
                 # Calculate the critic loss
-                critic_loss = F.mse_loss(critic_value, returns)
-
-                # Calculate the total loss
-                total_loss = actor_loss + 0.5 * critic_loss
+                critic_loss = (returns-critic_value)**2
+                critic_loss = critic_loss.mean()
 
                 # Zero the gradients
                 self.actor.optimizer.zero_grad()
                 self.critic.optimizer.zero_grad()
 
-                # Backpropagate the total loss
-                total_loss.backward()
+                # Backpropagate both losses
+                actor_loss.backward()
+                critic_loss.backward()
 
                 # Update the weights
                 self.actor.optimizer.step()
@@ -178,3 +189,18 @@ class PPO_Agent:
 
         # Clear the memory at the end of each epoch 
         self.memory.clear_memory()
+
+    def joint_entropy(self, dist_1, dist_2, dist_3):
+        """
+        Calculate the joint entropy of three binomial distributions
+        Average over the number of batches
+        """
+        probs_1 = [dist_1.probs, 1 - dist_1.probs]
+        probs_2 = [dist_2.probs, 1 - dist_2.probs]
+        probs_3 = [dist_3.probs, 1 - dist_3.probs]
+        entropy = 0
+        for i in range(2):
+            for j in range(2):
+                for k in range(2):
+                    entropy -= probs_1[i] * probs_2[j] * probs_3[k] * torch.log(probs_1[i] * probs_2[j] * probs_3[k])
+        return entropy

@@ -25,8 +25,7 @@ class Actor(nn.Module):
             nn.ReLU(),
             nn.Linear(fc1_dims, fc2_dims),
             nn.ReLU(),
-            nn.Linear(fc2_dims, action_dim), # Output layer has action_dim neurons      
-            nn.Softmax(dim = -1)      
+            nn.Linear(fc2_dims, action_dim) # Output layer has action_dim neurons
         )
 
         # Optimizer is adam
@@ -42,7 +41,13 @@ class Actor(nn.Module):
         :return: mean of the action distribution
         """
         # Pass the state through the network
-        return self.network(state)
+        state = self.network(state)
+
+        # Apply 3 sigmoid functions
+        state = torch.sigmoid(state)
+
+        # Return the output
+        return state
 
     def save_checkpoint(self, path):
         """
