@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data.sampler import *
-from torch.distributions import Binomial
+from torch.distributions import Categorical
 from .PPOMemory import PPO_Memory
 from .ActorCritic import Actor, Critic 
 
@@ -67,32 +67,44 @@ class PPO_Agent:
         self.actor.load_checkpoint(f"{folder_path}/episode-{e}-agent-{agent_number}-actor.pt")
         self.critic.load_checkpoint(f"{folder_path}/episode-{e}-agent-{agent_number}-critic.pt")
 
-    def select_action(self, observation, greedy = False):
+    def select_action(self, observation, greedy=False):
         
         # Convert the observation to a tensor 
         state = observation.to(self.device)
 
-        sigmoid = self.actor(state)
+        sigmoids = self.actor(state)
         value = self.critic(state)
 
         # If greedy, we are testing so we round each of the sigmoids to the nearest integer
         if greedy:
-            return (sigmoid > 0.5).float(), None, None
+            return (sigmoids > 0.5).float(), None, None
         
-        # Three binomial distributions for the action
-        dist_1 = Binomial(probs=sigmoid[0])
-        dist_2 = Binomial(probs=sigmoid[1])
-        dist_3 = Binomial(probs=sigmoid[2])
+        # Calculate the probability of every combination of actions
+        # Order: 000, 001, 010, 011, 100, 101, 110, 111
+        probs = torch.zeros(8)
+        probs[0] = ((1 - sigmoids[0]) * (1 - sigmoids[1]) * (1 - sigmoids[2]))
+        probs[1] = ((1 - sigmoids[0]) * (1 - sigmoids[1]) * sigmoids[2])
+        probs[2] = ((1 - sigmoids[0]) * sigmoids[1] * (1 - sigmoids[2]))
+        probs[3] = ((1 - sigmoids[0]) * sigmoids[1] * sigmoids[2])
+        probs[4] = (sigmoids[0] * (1 - sigmoids[1]) * (1 - sigmoids[2]))
+        probs[5] = (sigmoids[0] * (1 - sigmoids[1]) * sigmoids[2])
+        probs[6] = (sigmoids[0] * sigmoids[1] * (1 - sigmoids[2]))
+        probs[7] = (sigmoids[0] * sigmoids[1] * sigmoids[2])        
+        
+        # Create a categorical distribution from the 3 binomial distributions by multiplying all possibilities
+        dist = Categorical(probs)
 
         # Get action by sampling from the distribution
-        action = torch.Tensor([dist_1.sample().item(), dist_2.sample().item(), dist_3.sample().item()])
+        action = dist.sample()
 
         # Get rid of batch dimension by squeezing 
-        # return the log probability of the action we took (By adding the log-probabilities for each dimension since the dimensions are independent)
-        probs = torch.squeeze(dist_1.log_prob(action[0])).item() + \
-                torch.squeeze(dist_2.log_prob(action[1])).item() + \
-                torch.squeeze(dist_3.log_prob(action[2])).item()
+        # return the log probability of the action we took
+        probs = torch.squeeze(dist.log_prob(action)).item()
+        action = torch.squeeze(action).item()
         value = torch.squeeze(value).item()
+
+        # Convert the action back to a binary array
+        action = [action // 4, (action // 2) % 2, action % 2]
         
         # return the action and the log probability of the action
         return action, probs, value
@@ -139,17 +151,28 @@ class PPO_Agent:
                 # Get the distributions and values for the current batch
                 sigmoid = self.actor(states)
 
-                # Convert each action's probability to a binomial distribution
-                dist_1 = Binomial(probs=sigmoid[:, 0])
-                dist_2 = Binomial(probs=sigmoid[:, 1])
-                dist_3 = Binomial(probs=sigmoid[:, 2])
+                # Calculate the probability of every combination of actions (Accounting for the batch size)
+                # Order: 000, 001, 010, 011, 100, 101, 110, 111
+                probs = torch.zeros((len(sigmoid), 8)).to(self.device)
+                probs[:, 0] = ((1 - sigmoid[:, 0]) * (1 - sigmoid[:, 1]) * (1 - sigmoid[:, 2]))
+                probs[:, 1] = ((1 - sigmoid[:, 0]) * (1 - sigmoid[:, 1]) * sigmoid[:, 2])
+                probs[:, 2] = ((1 - sigmoid[:, 0]) * sigmoid[:, 1] * (1 - sigmoid[:, 2]))
+                probs[:, 3] = ((1 - sigmoid[:, 0]) * sigmoid[:, 1] * sigmoid[:, 2])
+                probs[:, 4] = (sigmoid[:, 0] * (1 - sigmoid[:, 1]) * (1 - sigmoid[:, 2]))
+                probs[:, 5] = (sigmoid[:, 0] * (1 - sigmoid[:, 1]) * sigmoid[:, 2])
+                probs[:, 6] = (sigmoid[:, 0] * sigmoid[:, 1] * (1 - sigmoid[:, 2]))
+                probs[:, 7] = (sigmoid[:, 0] * sigmoid[:, 1] * sigmoid[:, 2])
+
+                # Convert each action's probability to a Categorical distribution
+                dist = Categorical(probs)
                 
                 critic_value = torch.squeeze(self.critic(states))
 
+                # Convert the actions to decimal
+                actions = actions[:, 0] * 4 + actions[:, 1] * 2 + actions[:, 2]
+
                 # Calculate the probabilities of the actions taken
-                new_probs = dist_1.log_prob(actions[:, 0].unsqueeze(-1))  + \
-                            dist_2.log_prob(actions[:, 1].unsqueeze(-1)) + \
-                            dist_3.log_prob(actions[:, 2].unsqueeze(-1))
+                new_probs = dist.log_prob(actions)
 
                 # Calculate the ratio of the new probabilities to the old probabilities
                 # We use the exponential of the difference to get the ratio 
@@ -164,9 +187,7 @@ class PPO_Agent:
                 # Calculate the actor loss: the minimum of the clipped and unclipped surrogate losses
                 # We take the negative because we want to maximize the objective
                 # We take the mean because we are averaging over the batch size
-                # Calculate the joint entropy of the three binomial distributions by taking all possible combination of actions
-                entropy = self.joint_entropy(dist_1, dist_2, dist_3)
-                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean() - self.beta * entropy.mean()
+                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean() - self.beta * dist.entropy().mean()
 
                 # Calculate the returns
                 returns = advantage[batch] + values[batch]
@@ -175,13 +196,15 @@ class PPO_Agent:
                 critic_loss = (returns-critic_value)**2
                 critic_loss = critic_loss.mean()
 
+                # Calculate the total loss
+                total_loss = actor_loss + 0.5 * critic_loss
+
                 # Zero the gradients
                 self.actor.optimizer.zero_grad()
                 self.critic.optimizer.zero_grad()
 
                 # Backpropagate both losses
-                actor_loss.backward()
-                critic_loss.backward()
+                total_loss.backward()
 
                 # Update the weights
                 self.actor.optimizer.step()
@@ -189,18 +212,3 @@ class PPO_Agent:
 
         # Clear the memory at the end of each epoch 
         self.memory.clear_memory()
-
-    def joint_entropy(self, dist_1, dist_2, dist_3):
-        """
-        Calculate the joint entropy of three binomial distributions
-        Average over the number of batches
-        """
-        probs_1 = [dist_1.probs, 1 - dist_1.probs]
-        probs_2 = [dist_2.probs, 1 - dist_2.probs]
-        probs_3 = [dist_3.probs, 1 - dist_3.probs]
-        entropy = 0
-        for i in range(2):
-            for j in range(2):
-                for k in range(2):
-                    entropy -= probs_1[i] * probs_2[j] * probs_3[k] * torch.log(probs_1[i] * probs_2[j] * probs_3[k])
-        return entropy
