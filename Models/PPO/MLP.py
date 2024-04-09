@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 class MLP(nn.Module):
     
-    def __init__(self, in_dim, out_dim, is_actor, DEVICE, fc1_dims=256, fc2_dims=128):
+    def __init__(self, in_dim, out_dim, is_actor, DEVICE, fc1_dims=64, fc2_dims=64):
 
         # Call the parent class constructor
         super(MLP, self).__init__()

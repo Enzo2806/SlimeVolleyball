@@ -15,10 +15,10 @@ class PPO_Agent:
     """
         This is the PPO class we will use as our model in main.py
     """
-    def __init__(self, obs_dim, act_dim, DEVICE, timesteps_per_batch=4800, max_timesteps_per_episode=1600, \
-                 n_updates_per_iteration=5, lr=0.005, gamma=0.95, clip=0.2, lam=0.98, \
+    def __init__(self, obs_dim, act_dim, DEVICE, timesteps_per_batch=4800, \
+                 n_updates_per_iteration=5, lr=0.005, eps=1e-5, gamma=0.95, clip=0.2, lam=0.98, \
                     num_minibatches=6, ent_coef=0, target_kl=0.02, max_grad_norm=0.5, \
-                        render=False):
+                        mlp_layers=[64, 64], render=False):
         """
             Initializes the PPO model, including hyperparameters.
         """		
@@ -28,7 +28,6 @@ class PPO_Agent:
         self.obs_dim = obs_dim
         self.act_dim = act_dim
         self.DEVICE = DEVICE
-        self.max_timesteps_per_episode = max_timesteps_per_episode
         self.timesteps_per_batch = timesteps_per_batch
         self.n_updates_per_iteration = n_updates_per_iteration
         self.lr = lr
@@ -42,12 +41,12 @@ class PPO_Agent:
         self.render = render
 
         # Initialize actor and critic networks
-        self.actor = MLP(self.obs_dim, self.act_dim, is_actor=True, DEVICE=DEVICE)
-        self.critic = MLP(self.obs_dim, 1, is_actor=True, DEVICE=DEVICE)
+        self.actor = MLP(self.obs_dim, self.act_dim, is_actor=True, DEVICE=DEVICE, fc1_dims=mlp_layers[0], fc2_dims=mlp_layers[1])
+        self.critic = MLP(self.obs_dim, 1, is_actor=True, DEVICE=DEVICE, fc1_dims=mlp_layers[0], fc2_dims=mlp_layers[1])
 
         # Initialize optimizers for actor and critic
-        self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
-        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
+        self.actor_optim = Adam(self.actor.parameters(), lr=self.lr, eps=eps)
+        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr, eps=eps)
 
         # Initialize the covariance matrix used to query the actor for actions
         # self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
