@@ -1,7 +1,6 @@
 """
 Inspired from: https://github.com/ericyangyu/PPO-for-Beginners
-Adapted for to perform self-play on a discrete action-space environment
-TODO: Add GPU utilization
+Adapted for to perform self-play (From scratch) on a discrete action-space environment (Originally continuous)
 """
 
 import numpy as np
@@ -295,9 +294,9 @@ class PPO_Agent:
 
     def gather_data(self, env, otherAgent):
        
-        batch_obs = np.array([])
-        batch_acts = np.array([])
-        batch_log_probs = np.array([])
+        batch_obs = []
+        batch_acts = []
+        batch_log_probs = []
         batch_rews = []
         batch_lens = []
         batch_vals = []
