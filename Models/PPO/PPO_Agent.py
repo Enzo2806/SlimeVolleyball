@@ -48,10 +48,6 @@ class PPO_Agent:
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr, eps=eps)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.lr, eps=eps)
 
-        # Initialize the covariance matrix used to query the actor for actions
-        # self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
-        # self.cov_mat = torch.diag(self.cov_var)
-
     def save_models(self, folder_path, agent_number, n):
         """
         Save the models
