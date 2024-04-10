@@ -42,7 +42,7 @@ class PPO_Agent:
 
         # Initialize actor and critic networks
         self.actor = MLP(self.obs_dim, self.act_dim, is_actor=True, DEVICE=DEVICE, fc1_dims=mlp_layers[0], fc2_dims=mlp_layers[1])
-        self.critic = MLP(self.obs_dim, 1, is_actor=True, DEVICE=DEVICE, fc1_dims=mlp_layers[0], fc2_dims=mlp_layers[1])
+        self.critic = MLP(self.obs_dim, 1, is_actor=False, DEVICE=DEVICE, fc1_dims=mlp_layers[0], fc2_dims=mlp_layers[1])
 
         # Initialize optimizers for actor and critic
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr, eps=eps)
@@ -58,6 +58,8 @@ class PPO_Agent:
         """
         self.actor.save_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-actor.pt")
         self.critic.save_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-critic.pt")  
+        torch.save(self.actor_optim.state_dict(), f"{folder_path}/step-{n}-agent-{agent_number}-actor_optim.pt")
+        torch.save(self.critic_optim.state_dict(), f"{folder_path}/step-{n}-agent-{agent_number}-critic_optim.pt")
 
     def load_models(self, folder_path, agent_number, n):
         """
@@ -65,7 +67,9 @@ class PPO_Agent:
         """
         self.actor.load_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-actor.pt")
         self.critic.load_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-critic.pt")
-
+        torch.load(self.actor_optim.state_dict(), f"{folder_path}/step-{n}-agent-{agent_number}-actor_optim.pt")
+        torch.load(self.critic_optim.state_dict(), f"{folder_path}/step-{n}-agent-{agent_number}-critic_optim.pt")
+        
     def copy_models(self, agent):
         """
         Copy the models
