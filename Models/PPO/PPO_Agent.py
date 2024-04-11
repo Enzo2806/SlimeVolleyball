@@ -63,8 +63,8 @@ class PPO_Agent:
         """
         self.actor.load_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-actor.pt")
         self.critic.load_checkpoint(f"{folder_path}/step-{n}-agent-{agent_number}-critic.pt")
-        torch.load(self.actor_optim.state_dict(), f"{folder_path}/step-{n}-agent-{agent_number}-actor_optim.pt")
-        torch.load(self.critic_optim.state_dict(), f"{folder_path}/step-{n}-agent-{agent_number}-critic_optim.pt")
+        self.actor_optim.load_state_dict(torch.load(f"{folder_path}/step-{n}-agent-{agent_number}-actor_optim.pt"))
+        self.critic_optim.load_state_dict(torch.load(f"{folder_path}/step-{n}-agent-{agent_number}-critic_optim.pt"))
         
     def copy_models(self, agent):
         """
@@ -240,11 +240,7 @@ class PPO_Agent:
         obs = torch.tensor(obs,dtype=torch.float).to(self.DEVICE)
         probs = self.actor(obs.to(self.DEVICE))
         
-        # Create a distribution with the mean action and std from the covariance matrix above.
-        # For more information on how this distribution works, check out Andrew Ng's lecture on it:
-        # https://www.youtube.com/watch?v=JjB58InuTqM
-        # dist = MultivariateNormal(mean, self.cov_mat)
-
+        # Create a categorical distribution over the list of probabilities of actions
         dist = Categorical(probs)
 
         # Sample an action from the distribution
