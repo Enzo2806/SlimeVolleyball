@@ -60,7 +60,7 @@ class LightPriorReplayBuffer():
         self.action[self.ptr] = action
         self.reward[self.ptr] = reward
         self.dw[self.ptr] = dw
-        self.priorities[self.ptr] = (abs(priority) + 0.01) ** self.alpha  # Calculate priority
+        self.priorities[self.ptr] = priority
 
         # Update pointer and size
         self.ptr = (self.ptr + 1) % self.buffer_size
@@ -78,17 +78,47 @@ class LightPriorReplayBuffer():
             and normalized importance-sampling weights.
         """
         # Calculate the probabilities for sampling based on priorities, avoiding the edge case at the buffer's current pointer.
-        Prob_torch_gpu = self.priorities[0:self.size].clone()
-        if self.ptr < self.size: Prob_torch_gpu[self.ptr - 1] = 0  # Exclude the edge case
+        Prob_torch_gpu = self.priorities[0:self.size-1].clone()
+        if self.ptr < self.size: 
+            Prob_torch_gpu[self.ptr - 1] = 0  # Exclude the edge case
 
         # Sample indices based on calculated probabilities.
-        ind = torch.multinomial(Prob_torch_gpu, num_samples=batch_size, replacement=self.replacement)
+        ind = torch.multinomial(Prob_torch_gpu, num_samples=batch_size, replacement=self.replacement) # Sample with replacement is faster
 
         # Calculate importance-sampling weights for the sampled experiences, normalizing them.
-        IS_weight = (1. / (self.size * Prob_torch_gpu[ind])) ** self.beta
+        IS_weight = ((self.size * Prob_torch_gpu[ind])) ** -self.beta
         Normed_IS_weight = (IS_weight / IS_weight.max()).unsqueeze(-1)  # Normalize weights
 
-        # Adjust indices for next state to handle edge cases and terminal states correctly.
-        next_state_indices = (ind + 1) % self.size
+        return self.state[ind], self.action[ind], self.reward[ind], self.state[ind+1], self.dw[ind], ind, Normed_IS_weight
 
-        return self.state[ind], self.action[ind], self.reward[ind], self.state[next_state_indices], self.dw[ind], ind, Normed_IS_weight
+    def save_to_disk(self, path):
+        """
+        Saves the buffer to disk.
+        
+        Arguments:
+            path: The path to save the buffer.
+        """
+        torch.save(self.state, f"{path}/state.pt")
+        torch.save(self.action, f"{path}/action.pt")
+        torch.save(self.reward, f"{path}/reward.pt")
+        torch.save(self.dw, f"{path}/dw.pt")
+        torch.save(self.priorities, f"{path}/priorities.pt")
+        torch.save(self.ptr, f"{path}/ptr.pt")
+        torch.save(self.size, f"{path}/size.pt")
+        torch.save(self.beta, f"{path}/beta.pt")
+
+    def load_from_disk(self, path):
+        """
+        Loads the buffer from disk.
+        
+        Arguments:
+            path: The path to load the buffer.
+        """
+        self.state = torch.load(f"{path}/state.pt")
+        self.action = torch.load(f"{path}/action.pt")
+        self.reward = torch.load(f"{path}/reward.pt")
+        self.dw = torch.load(f"{path}/dw.pt")
+        self.priorities = torch.load(f"{path}/priorities.pt")
+        self.ptr = torch.load(f"{path}/ptr.pt")
+        self.size = torch.load(f"{path}/size.pt")
+        self.beta = torch.load(f"{path}/beta.pt")
