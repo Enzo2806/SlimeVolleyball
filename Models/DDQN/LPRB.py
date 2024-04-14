@@ -36,6 +36,7 @@ class LightPriorReplayBuffer():
         self.state = torch.zeros((buffer_size, state_dim), device=device)
         self.action = torch.zeros((buffer_size, 1), dtype=torch.int64, device=device)
         self.reward = torch.zeros((buffer_size, 1), device=device)
+        self.tr = torch.zeros((buffer_size, 1), dtype=torch.bool, device=device) #only 0/1
         self.dw = torch.zeros((buffer_size, 1), dtype=torch.bool, device=device)  # 0/1 indicating done states
         self.priorities = torch.zeros(buffer_size, dtype=torch.float32, device=device)  # Priorities based on TD-error
         self.buffer_size = buffer_size
@@ -44,7 +45,7 @@ class LightPriorReplayBuffer():
         self.beta = beta_init
         self.replacement = replacement
 
-    def add(self, state, action, reward, dw, priority):
+    def add(self, state, action, reward, dw, tr, priority):
         """
         Adds a new experience to the buffer.
         
@@ -60,11 +61,25 @@ class LightPriorReplayBuffer():
         self.action[self.ptr] = action
         self.reward[self.ptr] = reward
         self.dw[self.ptr] = dw
+        self.tr[self.ptr] = tr
         self.priorities[self.ptr] = priority
 
         # Update pointer and size
         self.ptr = (self.ptr + 1) % self.buffer_size
         self.size = min(self.size + 1, self.buffer_size)
+
+        # CHeck for NaNs:
+        if torch.isnan(self.state).any():
+            print('Nans in state')
+        if torch.isnan(self.action).any():
+            print('Nans in action')
+        if torch.isnan(self.reward).any():
+            print('Nans in reward')
+        if torch.isnan(self.dw).any():
+            print('Nans in dw')
+        if torch.isnan(self.priorities).any():
+            print('Nans in priorities')
+
 
     def sample(self, batch_size):
         """
@@ -77,19 +92,40 @@ class LightPriorReplayBuffer():
             A tuple containing batches of states, actions, rewards, next states, done flags, indices of sampled experiences, 
             and normalized importance-sampling weights.
         """
-        # Calculate the probabilities for sampling based on priorities, avoiding the edge case at the buffer's current pointer.
-        Prob_torch_gpu = self.priorities[0:self.size-1].clone()
-        if self.ptr < self.size: 
-            Prob_torch_gpu[self.ptr - 1] = 0  # Exclude the edge case
+        # Normalize priorities to create a probability distribution
+        probabilities = self.priorities[:self.size] ** self.alpha  # Apply alpha scaling
+        total_priority = probabilities.sum()
+        if total_priority == 0:
+            raise ValueError("Sum of priorities is zero, cannot sample.")
+        probabilities /= total_priority
 
-        # Sample indices based on calculated probabilities.
-        ind = torch.multinomial(Prob_torch_gpu, num_samples=batch_size, replacement=self.replacement) # Sample with replacement is faster
+        # Setting the probability of the current pointer to zero if it is in the range
+        if self.ptr < self.size:
+            probabilities[self.ptr] = 0
+        probabilities /= probabilities.sum()  # Re-normalize after modifying
 
-        # Calculate importance-sampling weights for the sampled experiences, normalizing them.
-        IS_weight = ((self.size * Prob_torch_gpu[ind])) ** -self.beta
-        Normed_IS_weight = (IS_weight / IS_weight.max()).unsqueeze(-1)  # Normalize weights
+        # Sample indices based on calculated probabilities
+        ind = torch.multinomial(probabilities, num_samples=batch_size, replacement=self.replacement)
 
-        return self.state[ind], self.action[ind], self.reward[ind], self.state[ind+1], self.dw[ind], ind, Normed_IS_weight
+        # Compute next states indices handling edge cases
+        next_indices = (ind + 1) % self.size
+
+        # Calculate importance-sampling weights for the sampled experiences, normalizing them
+        IS_weights = (1 / (probabilities[ind] * self.size)) ** self.beta
+        IS_weights /= IS_weights.max()
+        IS_weights = IS_weights.unsqueeze(-1)  # Adjust shape for batching
+
+        # CHeck for NaNs:
+        # if torch.isnan(Normed_IS_weight).any():
+        #     print('Nans in Normed_IS_weight')
+        if torch.isnan(probabilities).any():
+            print('Nans in probabilities')
+        if torch.isnan(IS_weights).any():
+            print('Nans in IS_weight')
+        if torch.isnan(ind).any():
+            print('Nans in ind')      
+
+        return self.state[ind], self.action[ind], self.reward[ind], self.state[next_indices], self.dw[ind], self.tr[ind], ind, IS_weights
 
     def save_to_disk(self, path):
         """
