@@ -252,7 +252,11 @@ class PPO_Agent:
         # If we're testing, just return the deterministic action. Sampling should only be for training
         # as our "exploration" factor.
         if greedy:
-            return torch.argmax(probs).item(), 1
+            actions = torch.argmax(probs, axis = -1)
+            if actions.size(dim=-1) == 1:
+                return actions.item(), 1 # Return the value if it's only 1 action (To be compatible with the training loops used)
+            else:
+                return actions.cpu(), 1 # Return an array of actions if it's a batch
 
         # Return the sampled action and the log probability of that action in our distribution
         return action.detach().item(), log_prob.detach()

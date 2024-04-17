@@ -1,34 +1,32 @@
-import slimevolleygym
-import gym
+import numpy as np
+import torch
+
+# Dictionary
+action_dict = {
+    0: [0, 0, 0],
+    1: [0, 0, 1],
+    2: [0, 1, 0],
+    3: [0, 1, 1],
+    4: [1, 0, 0],
+    5: [1, 0, 1],
+    6: [1, 1, 0],
+    7: [1, 1, 1]
+}
+
+action_map = np.array([[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1], [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1]])
+
 
 # To convert the action value (0-5) to the action vector
 def convert_to_vector(action_val):
-    if action_val == 0:
-        return [0, 0, 0]
-    elif action_val == 1:
-        return [0, 0, 1]
-    elif action_val == 2:
-        return [0, 1, 0]
-    elif action_val == 3:
-        return [0, 1, 1]
-    elif action_val == 4:
-        return [1, 0, 0]
-    elif action_val == 5:
-        return [1, 0, 1]
-    elif action_val == 6:
-        return [1, 1, 0]
-    elif action_val == 7:
-        return [1, 1, 1]
-    else:
-        raise ValueError("Invalid action value")
-    
+    return action_dict[action_val]
+
+# To convert a list of action values into a list of action vectors
+def convert_list_to_vectors(action_vals):
+    return action_map[action_vals]
+
 # To convert the action vector to the action value (0-5)
 def convert_to_value(action_vector):
     return action_vector[0]*4 + action_vector[1]*2 + action_vector[2]
-
-
-import numpy as np
-import torch
 
 class SumTree(object):
     """
