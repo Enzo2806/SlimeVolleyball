@@ -41,7 +41,7 @@ class DDQN_Agent(object):
 			p.requires_grad = False
 		
 		self.gamma = gamma
-		self.tau = 0.005
+		# self.tau = 0.005
 		self.batch_size = batch_size
 		self.epsilon = epsilon
 		self.action_dim = action_dim
@@ -91,8 +91,8 @@ class DDQN_Agent(object):
 			replay_buffer.priorities[ind] = batch_priorities
 
 		# Update the frozen target models
-		for param, target_param in zip(self.q_net.parameters(), self.q_target.parameters()):
-			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+		# for param, 
+		# m.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
 		return q_loss.item()
 
