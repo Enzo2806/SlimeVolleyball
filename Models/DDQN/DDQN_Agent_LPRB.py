@@ -8,7 +8,9 @@ import torch.nn as nn
 import os
 
 def build_net(layer_shape, activation, output_activation):
-	'''build net with for loop'''
+	# Build a neural network with the given layer shape
+	# The activation function is applied to all layers except the output layer
+	# The output activation function is applied to the output layer
 	layers = []
 	for j in range(len(layer_shape)-1):
 		act = activation if j < len(layer_shape)-2 else output_activation
@@ -17,6 +19,8 @@ def build_net(layer_shape, activation, output_activation):
 
 
 class Q_Net(nn.Module):
+	# Q network
+	# The Q network is used to estimate the Q value of a state-action pair
 	def __init__(self, state_dim, action_dim, hidden_layer_shape):
 		super(Q_Net, self).__init__()
 		layers = [state_dim] + list(hidden_layer_shape) + [action_dim]
@@ -24,8 +28,6 @@ class Q_Net(nn.Module):
 
 	def forward(self, s):
 		q = self.Q(s)
-		if torch.isnan(q).any():
-			print("NaNs detected in output of Q")
 		return q
 
 
@@ -47,7 +49,7 @@ class DDQN_Agent(object):
 		self.action_dim = action_dim
 		self.device = device
 
-	def select_action(self, state, deterministic): 	#only used when interact with the env
+	def select_action(self, state, deterministic): 	# only used when interact with the env
 		with torch.no_grad():
 			state = torch.FloatTensor(state.reshape(1, -1)).to(self.device)
 			if deterministic:
@@ -66,20 +68,20 @@ class DDQN_Agent(object):
 
 
 	def train(self,replay_buffer):
-		s, a, r, s_next, dw, tr, ind, Normed_IS_weight = replay_buffer.sample(self.batch_size)
+		s, a, r, s_next, done, tr, ind, Normed_IS_weight = replay_buffer.sample(self.batch_size)
 
 		'''Compute the target Q value'''
 		with torch.no_grad():
 			argmax_a = self.q_net(s).argmax(dim=1).unsqueeze(-1)
 			max_q_prime = self.q_target(s_next).gather(1,argmax_a)
 			'''Avoid impacts caused by reaching max episode steps'''
-			Q_target = r + (~dw) * self.gamma * max_q_prime #dw: die or win
+			Q_target = r + (~done) * self.gamma * max_q_prime 
 
 		# Get current Q estimates
 		current_Q = self.q_net(s).gather(1,a)
 
 		# BP
-		q_loss = torch.square((~tr) * Normed_IS_weight * (Q_target - current_Q)).mean()  #这里好像不用乘(~tr)
+		q_loss = torch.square((~tr) * Normed_IS_weight * (Q_target - current_Q)).mean() 
 		self.q_net_optimizer.zero_grad()
 		q_loss.backward()
 		torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 10.0)
