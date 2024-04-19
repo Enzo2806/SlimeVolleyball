@@ -1,3 +1,6 @@
+# This code was modified and adapted from 
+# https://github.com/XinJingHao/Prioritized-Experience-Replay-DDQN-Pytorch/tree/main
+
 import torch
 import numpy as np
 
@@ -16,7 +19,7 @@ class LightPriorReplayBuffer():
         state: Tensor storing the states.
         action: Tensor storing the actions.
         reward: Tensor storing the rewards.
-        dw: Tensor indicating whether a state is terminal (done).
+        done: Tensor indicating whether a state is terminal.
         priorities: Tensor storing the priorities of experiences based on their TD-error.
         buffer_size: The maximum size of the buffer.
         alpha: The exponent determining the impact of TD-error on priority.
@@ -37,7 +40,7 @@ class LightPriorReplayBuffer():
         self.action = torch.zeros((buffer_size, 1), dtype=torch.int64, device=device)
         self.reward = torch.zeros((buffer_size, 1), device=device)
         self.tr = torch.zeros((buffer_size, 1), dtype=torch.bool, device=device) #only 0/1
-        self.dw = torch.zeros((buffer_size, 1), dtype=torch.bool, device=device)  # 0/1 indicating done states
+        self.done = torch.zeros((buffer_size, 1), dtype=torch.bool, device=device)  # 0/1 indicating done states
         self.priorities = torch.zeros(buffer_size, dtype=torch.float32, device=device)  # Priorities based on TD-error
         self.buffer_size = buffer_size
 
@@ -45,7 +48,7 @@ class LightPriorReplayBuffer():
         self.beta = beta_init
         self.replacement = replacement
 
-    def add(self, state, action, reward, dw, tr, priority):
+    def add(self, state, action, reward, done, tr, priority):
         """
         Adds a new experience to the buffer.
         
@@ -53,32 +56,20 @@ class LightPriorReplayBuffer():
             state: The current state.
             action: The action taken.
             reward: The reward received.
-            dw: Boolean indicating if the next state is terminal.
+            done: Boolean indicating if the next state is terminal.
             priority: The priority of this experience.
         """
         # Convert inputs to appropriate tensor formats and store them in the buffer.
         self.state[self.ptr] = torch.tensor(state, dtype=torch.float32, device=self.device)
         self.action[self.ptr] = action
         self.reward[self.ptr] = reward
-        self.dw[self.ptr] = dw
+        self.done[self.ptr] = done
         self.tr[self.ptr] = tr
         self.priorities[self.ptr] = priority
 
         # Update pointer and size
         self.ptr = (self.ptr + 1) % self.buffer_size
         self.size = min(self.size + 1, self.buffer_size)
-
-        # CHeck for NaNs:
-        if torch.isnan(self.state).any():
-            print('Nans in state')
-        if torch.isnan(self.action).any():
-            print('Nans in action')
-        if torch.isnan(self.reward).any():
-            print('Nans in reward')
-        if torch.isnan(self.dw).any():
-            print('Nans in dw')
-        if torch.isnan(self.priorities).any():
-            print('Nans in priorities')
 
 
     def sample(self, batch_size):
@@ -125,7 +116,7 @@ class LightPriorReplayBuffer():
         if torch.isnan(ind).any():
             print('Nans in ind')      
 
-        return self.state[ind], self.action[ind], self.reward[ind], self.state[next_indices], self.dw[ind], self.tr[ind], ind, IS_weights
+        return self.state[ind], self.action[ind], self.reward[ind], self.state[next_indices], self.done[ind], self.tr[ind], ind, IS_weights
 
     def save_to_disk(self, path):
         """
@@ -137,7 +128,7 @@ class LightPriorReplayBuffer():
         torch.save(self.state, f"{path}/state.pt")
         torch.save(self.action, f"{path}/action.pt")
         torch.save(self.reward, f"{path}/reward.pt")
-        torch.save(self.dw, f"{path}/dw.pt")
+        torch.save(self.done, f"{path}/done.pt")
         torch.save(self.priorities, f"{path}/priorities.pt")
         torch.save(self.ptr, f"{path}/ptr.pt")
         torch.save(self.size, f"{path}/size.pt")
@@ -153,7 +144,7 @@ class LightPriorReplayBuffer():
         self.state = torch.load(f"{path}/state.pt")
         self.action = torch.load(f"{path}/action.pt")
         self.reward = torch.load(f"{path}/reward.pt")
-        self.dw = torch.load(f"{path}/dw.pt")
+        self.done = torch.load(f"{path}/done.pt")
         self.priorities = torch.load(f"{path}/priorities.pt")
         self.ptr = torch.load(f"{path}/ptr.pt")
         self.size = torch.load(f"{path}/size.pt")
